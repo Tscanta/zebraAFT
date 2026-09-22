@@ -111,13 +111,156 @@ async def cleanup_expired_drops():
 
             for (drop_id,) in expired_drops:
 
-                drop_folder = os.path.join(
-                    UPLOAD_DIR,
-                    drop_id
+                cursor.execute(
+                    """
+                    SELECT storage_path
+                    FROM files
+                    WHERE drop_id = %s
+                    """,
+                    (drop_id,)
                 )
 
-                if os.path.exists(drop_folder):
-                    shutil.rmtree(drop_folder)
+                storage_files = cursor.fetchall()
+
+                storage_delete_failed = False
+
+                for (storage_path,) in storage_files:
+                    try:
+                        supabase.storage.from_(
+                            "uploads"
+                        ).remove(
+                            [storage_path]
+                        )
+
+                        print(
+                            f"Deleted storage file: {storage_path}"
+                        )
+
+                    except Exception as error:
+                        storage_delete_failed = True
+
+                        print(
+                            f"Could not delete storage file "
+                            f"{storage_path}: {error}"
+                        )
+
+                # IMPORTANT:
+                # Do not delete the database record if
+                # Storage deletion failed.
+                if storage_delete_failed:
+                    print(
+                        f"Skipping database deletion "
+                        f"for Drop: {drop_id}"
+                    )
+                    continue
+
+                cursor.execute(
+                    """
+                    DELETE FROM drops
+                    WHERE drop_id = %s
+                    """,
+                    (drop_id,)
+                )
+
+                print(
+                    f"Expired Drop deleted: {drop_id}"
+                )
+
+            conn.commit()
+
+            cursor.close()
+            conn.close()
+
+        except Exception as error:
+            print(
+                f"Could not clean expired Drops: {error}"
+            )
+
+        await asyncio.sleep(60)
+    while True:
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+
+            cursor.execute(
+                """
+                SELECT drop_id
+                FROM drops
+                WHERE expires_at IS NOT NULL
+                AND expires_at <= NOW()
+                """
+            )
+
+            expired_drops = cursor.fetchall()
+
+            for (drop_id,) in expired_drops:
+
+                # Get Storage paths
+                cursor.execute(
+                    """
+                    SELECT storage_path
+                    FROM files
+                    WHERE drop_id = %s
+                    """,
+                    (drop_id,)
+                )
+
+                storage_files = cursor.fetchall()
+
+                # Delete files from Supabase Storage
+                for (storage_path,) in storage_files:
+                    try:
+                        supabase.storage.from_(
+                            "uploads"
+                        ).remove(
+                            [storage_path]
+                        )
+                    except Exception as error:
+                        print(
+                            f"Could not delete "
+                            f"{storage_path}: {error}"
+                        )
+
+                # Delete Drop from database
+                cursor.execute(
+                    """
+                    DELETE FROM drops
+                    WHERE drop_id = %s
+                    """,
+                    (drop_id,)
+                )
+
+                print(
+                    f"Expired Drop deleted: {drop_id}"
+                )
+
+            conn.commit()
+
+            cursor.close()
+            conn.close()
+
+        except Exception as error:
+            print(
+                f"Could not clean expired Drops: {error}"
+            )
+
+        await asyncio.sleep(60)
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+
+            cursor.execute(
+                """
+                SELECT drop_id
+                FROM drops
+                WHERE expires_at IS NOT NULL
+                AND expires_at <= NOW()
+                """
+            )
+
+            expired_drops = cursor.fetchall()
+
+            for (drop_id,) in expired_drops:
 
                 cursor.execute(
                     """
@@ -533,6 +676,29 @@ def delete_drop(
 
     if os.path.exists(drop_folder):
         shutil.rmtree(drop_folder)
+
+        # Get all storage paths for this Drop
+        cursor.execute(
+            """
+            SELECT storage_path
+            FROM files
+            WHERE drop_id = %s
+            """,
+            (drop_id,)
+        )
+
+        storage_files = cursor.fetchall()
+
+        # Delete files from Supabase Storage
+        for (storage_path,) in storage_files:
+            try:
+                supabase.storage.from_("uploads").remove(
+                    [storage_path]
+                )
+            except Exception as error:
+                print(
+                    f"Could not delete {storage_path}: {error}"
+                )
 
     # Delete database record
     # files are automatically deleted because
