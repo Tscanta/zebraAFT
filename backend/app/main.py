@@ -15,6 +15,7 @@ import string
 
 import psycopg2
 
+MAX_FILE_SIZE = 100 * 1024 * 1024
 
 # Load environment variables
 load_dotenv()
@@ -47,7 +48,6 @@ supabase = create_client(
 # Connect to the Supabase PostgreSQL database
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL)
-
 
 app = FastAPI(title="Anonymous File Transfer")
 
@@ -252,7 +252,9 @@ async def upload_file(
     # Make sure the Drop exists
     cursor.execute(
         """
-        SELECT drop_id
+        SELECT
+          drop_id,
+          expires_at
         FROM drops
         WHERE drop_id = %s
         """,
@@ -268,6 +270,18 @@ async def upload_file(
         raise HTTPException(
             status_code=404,
             detail="Drop not found"
+        )
+    # Prevent uploads to expired Drops
+    if (
+        drop[1] is not None
+        and drop[1] <= datetime.utcnow()
+    ):
+        cursor.close()
+        conn.close()
+
+        raise HTTPException(
+            status_code=404,
+            detail="Drop has expired"
         )
 
     # Keep the original filename for downloads,
@@ -285,6 +299,12 @@ async def upload_file(
     )
 
     file_bytes = await file.read()
+
+    if len(file_bytes) > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail="File is too large. Maximum size is 100 MB."
+        )
 
     try:
         supabase.storage.from_(
@@ -361,6 +381,7 @@ def get_drop(drop_id: str):
         FROM drops
         WHERE drop_id = %s
         """,
+        drop = cursor.fetchone()
         (drop_id,)
     )
 
@@ -373,6 +394,18 @@ def get_drop(drop_id: str):
         raise HTTPException(
             status_code=404,
             detail="Drop not found"
+        )
+    # Reject Drops that have already expired
+    if (
+        drop[2] is not None
+        and drop[2] <= datetime.utcnow()
+    ):
+        cursor.close()
+        conn.close()
+
+        raise HTTPException(
+            status_code=404,
+            detail="Drop has expired"
         )
 
     cursor.execute(
