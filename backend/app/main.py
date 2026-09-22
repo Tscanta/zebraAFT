@@ -1,5 +1,8 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from datetime import datetime, timedelta
+from dotenv import load_dotenv
+
 import secrets
 import string
 import os
@@ -7,8 +10,15 @@ import shutil
 import mimetypes
 import json
 import asyncio
-from datetime import datetime, timedelta
+import psycopg2
 
+load_dotenv()
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL is not set")
+
+conn = psycopg2.connect(DATABASE_URL)
 
 app = FastAPI(title="Anonymous File Transfer")
 
