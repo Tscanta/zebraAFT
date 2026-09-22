@@ -1,6 +1,7 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from supabase import create_client
 
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
@@ -18,6 +19,24 @@ import psycopg2
 load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL")
+
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_SERVICE_ROLE_KEY = os.getenv(
+    "SUPABASE_SERVICE_ROLE_KEY"
+)
+
+if not SUPABASE_URL:
+    raise RuntimeError("SUPABASE_URL is not set")
+
+if not SUPABASE_SERVICE_ROLE_KEY:
+    raise RuntimeError(
+        "SUPABASE_SERVICE_ROLE_KEY is not set"
+    )
+
+supabase = create_client(
+    SUPABASE_URL,
+    SUPABASE_SERVICE_ROLE_KEY
+)
 
 if not DATABASE_URL:
     raise RuntimeError("DATABASE_URL is not set")
@@ -204,7 +223,7 @@ def create_drop(lifetime: str = "24h"):
 
 # Upload file
 @app.post("/drops/{drop_id}/files")
-def upload_file(
+async def upload_file(
     drop_id: str,
     file: UploadFile = File(...)
 ):
@@ -250,21 +269,20 @@ def upload_file(
         exist_ok=True
     )
 
-    storage_path = os.path.join(
-        drop_folder,
-        f"{file_id}_{filename}"
-    )
+    _, extension = os.path.splitext(filename)
 
-    # Save actual file locally
-    with open(
+    storage_path = f"{drop_id}/{file_id}{extension}"
+
+    file_bytes = await file.read()
+
+    supabase.storage.from_("uploads").upload(
         storage_path,
-        "wb"
-    ) as buffer:
-
-        shutil.copyfileobj(
-            file.file,
-            buffer
-        )
+        file_bytes,
+        {
+            "content-type": file.content_type
+            or "application/octet-stream"
+        }
+    )
 
     # Save metadata in Supabase
     cursor.execute(
@@ -367,6 +385,55 @@ def get_drop(drop_id: str):
 # Download file
 @app.get("/files/{file_id}/download")
 def download_file(file_id: str):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT filename, storage_path
+        FROM files
+        WHERE file_id = %s
+        """,
+        (file_id,)
+    )
+
+    result = cursor.fetchone()
+
+    cursor.close()
+    conn.close()
+
+    if not result:
+        raise HTTPException(
+            status_code=404,
+            detail="File not found"
+        )
+
+    filename, storage_path = result
+
+    try:
+        file_bytes = supabase.storage.from_(
+            "uploads"
+        ).download(storage_path)
+
+    except Exception:
+        raise HTTPException(
+            status_code=404,
+            detail="File not found in storage"
+        )
+
+    media_type, _ = mimetypes.guess_type(filename)
+
+    from fastapi.responses import Response
+
+    return Response(
+        content=file_bytes,
+        media_type=media_type or "application/octet-stream",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{filename}"'
+            )
+        }
+    )
 
     for drop_id in os.listdir(UPLOAD_DIR):
 
