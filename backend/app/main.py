@@ -1,17 +1,18 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
-from supabase import create_client
+from fastapi.responses import Response
 
-from datetime import datetime, timedelta
+from supabase import create_client
 from dotenv import load_dotenv
 
+from datetime import datetime, timedelta
+
+import asyncio
+import mimetypes
+import os
 import secrets
 import string
-import os
-import shutil
-import mimetypes
-import asyncio
+
 import psycopg2
 
 
@@ -19,11 +20,13 @@ import psycopg2
 load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL")
-
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv(
     "SUPABASE_SERVICE_ROLE_KEY"
 )
+
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL is not set")
 
 if not SUPABASE_URL:
     raise RuntimeError("SUPABASE_URL is not set")
@@ -33,16 +36,15 @@ if not SUPABASE_SERVICE_ROLE_KEY:
         "SUPABASE_SERVICE_ROLE_KEY is not set"
     )
 
+
+# Connect to Supabase Storage
 supabase = create_client(
     SUPABASE_URL,
     SUPABASE_SERVICE_ROLE_KEY
 )
 
-if not DATABASE_URL:
-    raise RuntimeError("DATABASE_URL is not set")
 
-
-# Connect to Supabase PostgreSQL
+# Connect to the Supabase PostgreSQL database
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL)
 
@@ -50,15 +52,7 @@ def get_db_connection():
 app = FastAPI(title="Anonymous File Transfer")
 
 
-# Start expiration cleanup worker
-@app.on_event("startup")
-async def startup_event():
-    asyncio.create_task(
-        cleanup_expired_drops()
-    )
-
-
-# CORS
+# Allow requests from the Svelte development server
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173"],
@@ -68,15 +62,15 @@ app.add_middleware(
 )
 
 
-UPLOAD_DIR = "uploads"
+# Start the background cleanup worker when the server starts
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(
+        cleanup_expired_drops()
+    )
 
-os.makedirs(
-    UPLOAD_DIR,
-    exist_ok=True
-)
 
-
-# Generate Drop ID
+# Generate a short code used to identify a Drop
 def generate_drop_id(length: int = 8) -> str:
     characters = string.ascii_uppercase + string.digits
 
@@ -86,12 +80,12 @@ def generate_drop_id(length: int = 8) -> str:
     )
 
 
-# Generate File ID
+# Generate a unique ID for a file
 def generate_file_id() -> str:
     return secrets.token_urlsafe(16)
 
 
-# Automatically delete expired Drops
+# Delete expired Drops and their files from Storage
 async def cleanup_expired_drops():
     while True:
         try:
@@ -144,9 +138,8 @@ async def cleanup_expired_drops():
                             f"{storage_path}: {error}"
                         )
 
-                # IMPORTANT:
-                # Do not delete the database record if
-                # Storage deletion failed.
+                # Keep the database record if Storage cleanup failed.
+                # This allows the next cleanup cycle to try again.
                 if storage_delete_failed:
                     print(
                         f"Skipping database deletion "
@@ -176,113 +169,7 @@ async def cleanup_expired_drops():
                 f"Could not clean expired Drops: {error}"
             )
 
-        await asyncio.sleep(60)
-    while True:
-        try:
-            conn = get_db_connection()
-            cursor = conn.cursor()
-
-            cursor.execute(
-                """
-                SELECT drop_id
-                FROM drops
-                WHERE expires_at IS NOT NULL
-                AND expires_at <= NOW()
-                """
-            )
-
-            expired_drops = cursor.fetchall()
-
-            for (drop_id,) in expired_drops:
-
-                # Get Storage paths
-                cursor.execute(
-                    """
-                    SELECT storage_path
-                    FROM files
-                    WHERE drop_id = %s
-                    """,
-                    (drop_id,)
-                )
-
-                storage_files = cursor.fetchall()
-
-                # Delete files from Supabase Storage
-                for (storage_path,) in storage_files:
-                    try:
-                        supabase.storage.from_(
-                            "uploads"
-                        ).remove(
-                            [storage_path]
-                        )
-                    except Exception as error:
-                        print(
-                            f"Could not delete "
-                            f"{storage_path}: {error}"
-                        )
-
-                # Delete Drop from database
-                cursor.execute(
-                    """
-                    DELETE FROM drops
-                    WHERE drop_id = %s
-                    """,
-                    (drop_id,)
-                )
-
-                print(
-                    f"Expired Drop deleted: {drop_id}"
-                )
-
-            conn.commit()
-
-            cursor.close()
-            conn.close()
-
-        except Exception as error:
-            print(
-                f"Could not clean expired Drops: {error}"
-            )
-
-        await asyncio.sleep(60)
-        try:
-            conn = get_db_connection()
-            cursor = conn.cursor()
-
-            cursor.execute(
-                """
-                SELECT drop_id
-                FROM drops
-                WHERE expires_at IS NOT NULL
-                AND expires_at <= NOW()
-                """
-            )
-
-            expired_drops = cursor.fetchall()
-
-            for (drop_id,) in expired_drops:
-
-                cursor.execute(
-                    """
-                    DELETE FROM drops
-                    WHERE drop_id = %s
-                    """,
-                    (drop_id,)
-                )
-
-                print(
-                    f"Expired Drop deleted: {drop_id}"
-                )
-
-            conn.commit()
-            cursor.close()
-            conn.close()
-
-        except Exception as error:
-            print(
-                f"Could not clean expired Drops: {error}"
-            )
-
+        # Check for expired Drops every 60 seconds
         await asyncio.sleep(60)
 
 
@@ -294,7 +181,7 @@ def root():
     }
 
 
-# Create Drop
+# Create a new Drop
 @app.post("/drops")
 def create_drop(lifetime: str = "24h"):
 
@@ -305,7 +192,6 @@ def create_drop(lifetime: str = "24h"):
         )
 
     drop_id = generate_drop_id()
-
     delete_token = secrets.token_urlsafe(32)
 
     created_at = datetime.utcnow()
@@ -346,17 +232,6 @@ def create_drop(lifetime: str = "24h"):
     cursor.close()
     conn.close()
 
-    # Create local folder for actual files
-    drop_folder = os.path.join(
-        UPLOAD_DIR,
-        drop_id
-    )
-
-    os.makedirs(
-        drop_folder,
-        exist_ok=True
-    )
-
     return {
         "drop_id": drop_id,
         "delete_token": delete_token,
@@ -364,7 +239,7 @@ def create_drop(lifetime: str = "24h"):
     }
 
 
-# Upload file
+# Upload a file to Supabase Storage
 @app.post("/drops/{drop_id}/files")
 async def upload_file(
     drop_id: str,
@@ -374,7 +249,7 @@ async def upload_file(
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    # Check Drop exists
+    # Make sure the Drop exists
     cursor.execute(
         """
         SELECT drop_id
@@ -395,39 +270,50 @@ async def upload_file(
             detail="Drop not found"
         )
 
-    # Generate file information
+    # Keep the original filename for downloads,
+    # but use a safe generated name in Storage.
     file_id = generate_file_id()
 
     filename = os.path.basename(
         file.filename
     )
 
-    drop_folder = os.path.join(
-        UPLOAD_DIR,
-        drop_id
-    )
-
-    os.makedirs(
-        drop_folder,
-        exist_ok=True
-    )
-
     _, extension = os.path.splitext(filename)
 
-    storage_path = f"{drop_id}/{file_id}{extension}"
+    storage_path = (
+        f"{drop_id}/{file_id}{extension}"
+    )
 
     file_bytes = await file.read()
 
-    supabase.storage.from_("uploads").upload(
-        storage_path,
-        file_bytes,
-        {
-            "content-type": file.content_type
-            or "application/octet-stream"
-        }
-    )
+    try:
+        supabase.storage.from_(
+            "uploads"
+        ).upload(
+            storage_path,
+            file_bytes,
+            {
+                "content-type": (
+                    file.content_type
+                    or "application/octet-stream"
+                )
+            }
+        )
 
-    # Save metadata in Supabase
+    except Exception as error:
+        cursor.close()
+        conn.close()
+
+        print(
+            f"Could not upload {filename}: {error}"
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail="Could not upload file"
+        )
+
+    # Save file metadata in the database
     cursor.execute(
         """
         INSERT INTO files (
@@ -459,14 +345,13 @@ async def upload_file(
     }
 
 
-# Get Drop
+# Get Drop information and its files
 @app.get("/drops/{drop_id}")
 def get_drop(drop_id: str):
 
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    # Get Drop metadata
     cursor.execute(
         """
         SELECT
@@ -490,7 +375,6 @@ def get_drop(drop_id: str):
             detail="Drop not found"
         )
 
-    # Get files belonging to Drop
     cursor.execute(
         """
         SELECT
@@ -511,7 +395,6 @@ def get_drop(drop_id: str):
     files = []
 
     for file_id, filename in file_rows:
-
         files.append({
             "file_id": file_id,
             "filename": filename
@@ -525,15 +408,18 @@ def get_drop(drop_id: str):
     }
 
 
-# Download file
+# Download a file from Supabase Storage
 @app.get("/files/{file_id}/download")
 def download_file(file_id: str):
+
     conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
         """
-        SELECT filename, storage_path
+        SELECT
+            filename,
+            storage_path
         FROM files
         WHERE file_id = %s
         """,
@@ -564,13 +450,16 @@ def download_file(file_id: str):
             detail="File not found in storage"
         )
 
-    media_type, _ = mimetypes.guess_type(filename)
-
-    from fastapi.responses import Response
+    media_type, _ = mimetypes.guess_type(
+        filename
+    )
 
     return Response(
         content=file_bytes,
-        media_type=media_type or "application/octet-stream",
+        media_type=(
+            media_type
+            or "application/octet-stream"
+        ),
         headers={
             "Content-Disposition": (
                 f'attachment; filename="{filename}"'
@@ -578,54 +467,8 @@ def download_file(file_id: str):
         }
     )
 
-    for drop_id in os.listdir(UPLOAD_DIR):
 
-        drop_folder = os.path.join(
-            UPLOAD_DIR,
-            drop_id
-        )
-
-        if not os.path.isdir(drop_folder):
-            continue
-
-        for stored_filename in os.listdir(
-            drop_folder
-        ):
-
-            if stored_filename.startswith(
-                file_id + "_"
-            ):
-
-                file_path = os.path.join(
-                    drop_folder,
-                    stored_filename
-                )
-
-                filename = stored_filename.split(
-                    "_",
-                    1
-                )[1]
-
-                media_type, _ = mimetypes.guess_type(
-                    filename
-                )
-
-                return FileResponse(
-                    path=file_path,
-                    filename=filename,
-                    media_type=(
-                        media_type
-                        or "application/octet-stream"
-                    )
-                )
-
-    raise HTTPException(
-        status_code=404,
-        detail="File not found"
-    )
-
-
-# Delete Drop
+# Delete a Drop using its private delete token
 @app.delete("/drops/{drop_id}")
 def delete_drop(
     drop_id: str,
@@ -635,7 +478,7 @@ def delete_drop(
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    # Get stored delete token
+    # Get the Drop's delete token
     cursor.execute(
         """
         SELECT delete_token
@@ -658,7 +501,7 @@ def delete_drop(
 
     stored_token = result[0]
 
-    # Verify creator token
+    # Only the creator with the correct token can delete the Drop
     if stored_token != delete_token:
         cursor.close()
         conn.close()
@@ -668,41 +511,44 @@ def delete_drop(
             detail="Invalid delete token"
         )
 
-    # Delete local files
-    drop_folder = os.path.join(
-        UPLOAD_DIR,
-        drop_id
+    # Get all files belonging to the Drop
+    cursor.execute(
+        """
+        SELECT storage_path
+        FROM files
+        WHERE drop_id = %s
+        """,
+        (drop_id,)
     )
 
-    if os.path.exists(drop_folder):
-        shutil.rmtree(drop_folder)
+    storage_files = cursor.fetchall()
 
-        # Get all storage paths for this Drop
-        cursor.execute(
-            """
-            SELECT storage_path
-            FROM files
-            WHERE drop_id = %s
-            """,
-            (drop_id,)
-        )
+    # Remove the actual files from Supabase Storage
+    for (storage_path,) in storage_files:
+        try:
+            supabase.storage.from_(
+                "uploads"
+            ).remove(
+                [storage_path]
+            )
 
-        storage_files = cursor.fetchall()
+        except Exception as error:
+            cursor.close()
+            conn.close()
 
-        # Delete files from Supabase Storage
-        for (storage_path,) in storage_files:
-            try:
-                supabase.storage.from_("uploads").remove(
-                    [storage_path]
-                )
-            except Exception as error:
-                print(
-                    f"Could not delete {storage_path}: {error}"
-                )
+            print(
+                f"Could not delete "
+                f"{storage_path}: {error}"
+            )
 
-    # Delete database record
-    # files are automatically deleted because
-    # drop_id uses ON DELETE CASCADE
+            raise HTTPException(
+                status_code=500,
+                detail="Could not delete Drop files"
+            )
+
+    # Delete the Drop metadata.
+    # File metadata is removed automatically through
+    # the ON DELETE CASCADE relationship.
     cursor.execute(
         """
         DELETE FROM drops
