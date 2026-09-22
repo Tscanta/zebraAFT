@@ -24,7 +24,8 @@ if not DATABASE_URL:
 
 
 # Connect to Supabase PostgreSQL
-conn = psycopg2.connect(DATABASE_URL)
+def get_db_connection():
+    return psycopg2.connect(DATABASE_URL)
 
 
 app = FastAPI(title="Anonymous File Transfer")
@@ -75,6 +76,7 @@ def generate_file_id() -> str:
 async def cleanup_expired_drops():
     while True:
         try:
+            conn = get_db_connection()
             cursor = conn.cursor()
 
             cursor.execute(
@@ -112,6 +114,7 @@ async def cleanup_expired_drops():
 
             conn.commit()
             cursor.close()
+            conn.close()
 
         except Exception as error:
             print(
@@ -153,6 +156,7 @@ def create_drop(lifetime: str = "24h"):
     else:
         expires_at = None
 
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -178,6 +182,7 @@ def create_drop(lifetime: str = "24h"):
     conn.commit()
 
     cursor.close()
+    conn.close()
 
     # Create local folder for actual files
     drop_folder = os.path.join(
@@ -204,6 +209,7 @@ def upload_file(
     file: UploadFile = File(...)
 ):
 
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     # Check Drop exists
@@ -220,6 +226,7 @@ def upload_file(
 
     if not drop:
         cursor.close()
+        conn.close()
 
         raise HTTPException(
             status_code=404,
@@ -281,6 +288,7 @@ def upload_file(
     conn.commit()
 
     cursor.close()
+    conn.close()
 
     return {
         "message": "File uploaded successfully",
@@ -294,6 +302,7 @@ def upload_file(
 @app.get("/drops/{drop_id}")
 def get_drop(drop_id: str):
 
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     # Get Drop metadata
@@ -313,6 +322,7 @@ def get_drop(drop_id: str):
 
     if not drop:
         cursor.close()
+        conn.close()
 
         raise HTTPException(
             status_code=404,
@@ -335,6 +345,7 @@ def get_drop(drop_id: str):
     file_rows = cursor.fetchall()
 
     cursor.close()
+    conn.close()
 
     files = []
 
@@ -411,6 +422,7 @@ def delete_drop(
     delete_token: str
 ):
 
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     # Get stored delete token
@@ -427,6 +439,7 @@ def delete_drop(
 
     if not result:
         cursor.close()
+        conn.close()
 
         raise HTTPException(
             status_code=404,
@@ -438,6 +451,7 @@ def delete_drop(
     # Verify creator token
     if stored_token != delete_token:
         cursor.close()
+        conn.close()
 
         raise HTTPException(
             status_code=403,
@@ -467,6 +481,7 @@ def delete_drop(
     conn.commit()
 
     cursor.close()
+    conn.close()
 
     return {
         "message": "Drop deleted successfully",
