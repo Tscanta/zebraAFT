@@ -1,5 +1,7 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
@@ -8,27 +10,35 @@ import string
 import os
 import shutil
 import mimetypes
-import json
 import asyncio
 import psycopg2
 
+
+# Load environment variables
 load_dotenv()
+
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 if not DATABASE_URL:
     raise RuntimeError("DATABASE_URL is not set")
 
+
+# Connect to Supabase PostgreSQL
 conn = psycopg2.connect(DATABASE_URL)
+
 
 app = FastAPI(title="Anonymous File Transfer")
 
+
+# Start expiration cleanup worker
 @app.on_event("startup")
 async def startup_event():
     asyncio.create_task(
         cleanup_expired_drops()
     )
 
-# Fixing Cors Error - Cors = error when connecting frontend and backend, because both have different links
+
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173"],
@@ -39,81 +49,79 @@ app.add_middleware(
 
 
 UPLOAD_DIR = "uploads"
-drop_tokens = {}
-os.makedirs(UPLOAD_DIR, exist_ok=True)
 
+os.makedirs(
+    UPLOAD_DIR,
+    exist_ok=True
+)
+
+
+# Generate Drop ID
 def generate_drop_id(length: int = 8) -> str:
     characters = string.ascii_uppercase + string.digits
-    return "".join(secrets.choice(characters) for _ in range(length))
+
+    return "".join(
+        secrets.choice(characters)
+        for _ in range(length)
+    )
 
 
+# Generate File ID
 def generate_file_id() -> str:
     return secrets.token_urlsafe(16)
 
+
+# Automatically delete expired Drops
 async def cleanup_expired_drops():
     while True:
+        try:
+            cursor = conn.cursor()
 
-        now = datetime.utcnow()
+            cursor.execute(
+                """
+                SELECT drop_id
+                FROM drops
+                WHERE expires_at IS NOT NULL
+                AND expires_at <= NOW()
+                """
+            )
 
-        if os.path.exists(UPLOAD_DIR):
+            expired_drops = cursor.fetchall()
 
-            for drop_id in os.listdir(UPLOAD_DIR):
+            for (drop_id,) in expired_drops:
 
                 drop_folder = os.path.join(
                     UPLOAD_DIR,
                     drop_id
                 )
 
-                if not os.path.isdir(drop_folder):
-                    continue
+                if os.path.exists(drop_folder):
+                    shutil.rmtree(drop_folder)
 
-                metadata_path = os.path.join(
-                    drop_folder,
-                    "metadata.json"
+                cursor.execute(
+                    """
+                    DELETE FROM drops
+                    WHERE drop_id = %s
+                    """,
+                    (drop_id,)
                 )
 
-                if not os.path.exists(metadata_path):
-                    continue
+                print(
+                    f"Expired Drop deleted: {drop_id}"
+                )
 
-                try:
-                    with open(
-                        metadata_path,
-                        "r",
-                        encoding="utf-8"
-                    ) as file:
-                        metadata = json.load(file)
+            conn.commit()
+            cursor.close()
 
-                    expires_at = metadata.get("expires_at")
+        except Exception as error:
+            print(
+                f"Could not clean expired Drops: {error}"
+            )
 
-                    # Permanent Drop
-                    if expires_at is None:
-                        continue
-
-                    expiration_time = datetime.fromisoformat(
-                        expires_at
-                    )
-
-                    if now >= expiration_time:
-
-                        shutil.rmtree(drop_folder)
-
-                        drop_tokens.pop(
-                            drop_id,
-                            None
-                        )
-
-                        print(
-                            f"Expired Drop deleted: {drop_id}"
-                        )
-
-                except Exception as error:
-                    print(
-                        f"Could not check Drop {drop_id}: {error}"
-                    )
-
-        # Check once every minute
         await asyncio.sleep(60)
 
+
+# API status
 @app.get("/")
 def root():
     return {
@@ -121,8 +129,10 @@ def root():
     }
 
 
+# Create Drop
 @app.post("/drops")
 def create_drop(lifetime: str = "24h"):
+
     if lifetime not in ["24h", "permanent"]:
         raise HTTPException(
             status_code=400,
@@ -130,12 +140,16 @@ def create_drop(lifetime: str = "24h"):
         )
 
     drop_id = generate_drop_id()
+
     delete_token = secrets.token_urlsafe(32)
 
     created_at = datetime.utcnow()
 
     if lifetime == "24h":
-        expires_at = created_at + timedelta(hours=24)
+        expires_at = (
+            created_at +
+            timedelta(hours=24)
+        )
     else:
         expires_at = None
 
@@ -162,8 +176,10 @@ def create_drop(lifetime: str = "24h"):
     )
 
     conn.commit()
+
     cursor.close()
 
+    # Create local folder for actual files
     drop_folder = os.path.join(
         UPLOAD_DIR,
         drop_id
@@ -179,126 +195,18 @@ def create_drop(lifetime: str = "24h"):
         "delete_token": delete_token,
         "expires_at": expires_at
     }
-    if lifetime not in ["24h", "permanent"]:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid drop lifetime"
-        )
-
-    drop_id = generate_drop_id()
-    delete_token = secrets.token_urlsafe(32)
-
-    created_at = datetime.utcnow()
-
-    if lifetime == "24h":
-        expires_at = created_at + timedelta(hours=24)
-    else:
-        expires_at = None
-
-    cursor = conn.cursor()
-
-    cursor.execute(
-        """
-        INSERT INTO drops (
-            drop_id,
-            delete_token,
-            lifetime,
-            created_at,
-            expires_at
-        )
-        VALUES (%s, %s, %s, %s, %s)
-        """,
-        (
-            drop_id,
-            delete_token,
-            lifetime,
-            created_at,
-            expires_at
-        )
-    )
-
-    conn.commit()
-    cursor.close()
-
-    drop_folder = os.path.join(
-        UPLOAD_DIR,
-        drop_id
-    )
-
-    os.makedirs(
-        drop_folder,
-        exist_ok=True
-    )
-
-    return {
-        "drop_id": drop_id,
-        "delete_token": delete_token,
-        "expires_at": expires_at
-    }
-    drop_id = generate_drop_id()
-    delete_token = secrets.token_urlsafe(32)
-
-    if lifetime not in ["24h", "permanent"]:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid drop lifetime"
-        )
-
-    drop_folder = os.path.join(
-        UPLOAD_DIR,
-        drop_id
-    )
-
-    os.makedirs(
-        drop_folder,
-        exist_ok=True
-    )
-
-    drop_tokens[drop_id] = delete_token
-
-    created_at = datetime.utcnow()
-
-    if lifetime == "24h":
-        expires_at = created_at + timedelta(hours=24)
-        expires_at = expires_at.isoformat()
-    else:
-        expires_at = None
-
-    metadata = {
-        "drop_id": drop_id,
-        "delete_token": delete_token,
-        "created_at": created_at.isoformat(),
-        "expires_at": expires_at
-    }
-
-    metadata_path = os.path.join(
-        drop_folder,
-        "metadata.json"
-    )
-
-    with open(
-        metadata_path,
-        "w",
-        encoding="utf-8"
-    ) as file:
-        json.dump(
-            metadata,
-            file,
-            indent=2
-        )
-
-    return {
-        "drop_id": drop_id,
-        "delete_token": delete_token,
-        "expires_at": expires_at
-    }
 
 
+# Upload file
 @app.post("/drops/{drop_id}/files")
-def upload_file(drop_id: str, file: UploadFile = File(...)):
+def upload_file(
+    drop_id: str,
+    file: UploadFile = File(...)
+):
+
     cursor = conn.cursor()
 
-    # Check that the Drop exists
+    # Check Drop exists
     cursor.execute(
         """
         SELECT drop_id
@@ -312,6 +220,7 @@ def upload_file(drop_id: str, file: UploadFile = File(...)):
 
     if not drop:
         cursor.close()
+
         raise HTTPException(
             status_code=404,
             detail="Drop not found"
@@ -319,7 +228,10 @@ def upload_file(drop_id: str, file: UploadFile = File(...)):
 
     # Generate file information
     file_id = generate_file_id()
-    filename = os.path.basename(file.filename)
+
+    filename = os.path.basename(
+        file.filename
+    )
 
     drop_folder = os.path.join(
         UPLOAD_DIR,
@@ -336,14 +248,18 @@ def upload_file(drop_id: str, file: UploadFile = File(...)):
         f"{file_id}_{filename}"
     )
 
-    # Save the actual file locally
-    with open(storage_path, "wb") as buffer:
+    # Save actual file locally
+    with open(
+        storage_path,
+        "wb"
+    ) as buffer:
+
         shutil.copyfileobj(
             file.file,
             buffer
         )
 
-    # Save file metadata in Supabase
+    # Save metadata in Supabase
     cursor.execute(
         """
         INSERT INTO files (
@@ -363,6 +279,7 @@ def upload_file(drop_id: str, file: UploadFile = File(...)):
     )
 
     conn.commit()
+
     cursor.close()
 
     return {
@@ -372,10 +289,14 @@ def upload_file(drop_id: str, file: UploadFile = File(...)):
         "filename": filename
     }
 
+
+# Get Drop
 @app.get("/drops/{drop_id}")
 def get_drop(drop_id: str):
+
     cursor = conn.cursor()
 
+    # Get Drop metadata
     cursor.execute(
         """
         SELECT
@@ -392,11 +313,13 @@ def get_drop(drop_id: str):
 
     if not drop:
         cursor.close()
+
         raise HTTPException(
             status_code=404,
             detail="Drop not found"
         )
 
+    # Get files belonging to Drop
     cursor.execute(
         """
         SELECT
@@ -416,6 +339,7 @@ def get_drop(drop_id: str):
     files = []
 
     for file_id, filename in file_rows:
+
         files.append({
             "file_id": file_id,
             "filename": filename
@@ -428,92 +352,50 @@ def get_drop(drop_id: str):
         "files": files
     }
 
-    drop_folder = os.path.join(
-        UPLOAD_DIR,
-        drop_id
-    )
 
-    if not os.path.exists(drop_folder):
-        raise HTTPException(
-            status_code=404,
-            detail="Drop not found"
-        )
-
-    metadata_path = os.path.join(
-        drop_folder,
-        "metadata.json"
-    )
-
-    if not os.path.exists(metadata_path):
-        raise HTTPException(
-            status_code=500,
-            detail="Drop metadata not found"
-        )
-
-    with open(
-        metadata_path,
-        "r",
-        encoding="utf-8"
-    ) as file:
-        metadata = json.load(file)
-
-    files = []
-
-    for stored_filename in os.listdir(drop_folder):
-
-        if stored_filename == "metadata.json":
-            continue
-
-        file_path = os.path.join(
-            drop_folder,
-            stored_filename
-        )
-
-        if os.path.isfile(file_path):
-
-            file_id, filename = stored_filename.split("_", 1)
-
-            files.append({
-                "file_id": file_id,
-                "filename": filename
-            })
-
-    return {
-        "drop_id": drop_id,
-        "created_at": metadata.get("created_at"),
-        "expires_at": metadata.get("expires_at"),
-        "files": files
-    }
-
-
+# Download file
 @app.get("/files/{file_id}/download")
 def download_file(file_id: str):
+
     for drop_id in os.listdir(UPLOAD_DIR):
 
-        drop_folder = os.path.join(UPLOAD_DIR, drop_id)
+        drop_folder = os.path.join(
+            UPLOAD_DIR,
+            drop_id
+        )
 
         if not os.path.isdir(drop_folder):
             continue
 
-        for stored_filename in os.listdir(drop_folder):
+        for stored_filename in os.listdir(
+            drop_folder
+        ):
 
-            if stored_filename.startswith(file_id + "_"):
+            if stored_filename.startswith(
+                file_id + "_"
+            ):
 
                 file_path = os.path.join(
                     drop_folder,
                     stored_filename
                 )
 
-                filename = stored_filename.split("_", 1)[1]
+                filename = stored_filename.split(
+                    "_",
+                    1
+                )[1]
 
-                from fastapi.responses import FileResponse
-
-                media_type, _ = mimetypes.guess_type(filename)
+                media_type, _ = mimetypes.guess_type(
+                    filename
+                )
 
                 return FileResponse(
                     path=file_path,
                     filename=filename,
-                    media_type=media_type or "application/octet-stream"
+                    media_type=(
+                        media_type
+                        or "application/octet-stream"
+                    )
                 )
 
     raise HTTPException(
@@ -521,32 +403,70 @@ def download_file(file_id: str):
         detail="File not found"
     )
 
+
+# Delete Drop
 @app.delete("/drops/{drop_id}")
 def delete_drop(
     drop_id: str,
     delete_token: str
 ):
-    drop_folder = os.path.join(UPLOAD_DIR, drop_id)
 
-    if not os.path.exists(drop_folder):
+    cursor = conn.cursor()
+
+    # Get stored delete token
+    cursor.execute(
+        """
+        SELECT delete_token
+        FROM drops
+        WHERE drop_id = %s
+        """,
+        (drop_id,)
+    )
+
+    result = cursor.fetchone()
+
+    if not result:
+        cursor.close()
+
         raise HTTPException(
             status_code=404,
             detail="Drop not found"
         )
 
-    # Temporary MVP protection.
-    # The creator's delete token will be stored in memory.
-    stored_token = drop_tokens.get(drop_id)
+    stored_token = result[0]
 
+    # Verify creator token
     if stored_token != delete_token:
+        cursor.close()
+
         raise HTTPException(
             status_code=403,
             detail="Invalid delete token"
         )
 
-    shutil.rmtree(drop_folder)
+    # Delete local files
+    drop_folder = os.path.join(
+        UPLOAD_DIR,
+        drop_id
+    )
 
-    del drop_tokens[drop_id]
+    if os.path.exists(drop_folder):
+        shutil.rmtree(drop_folder)
+
+    # Delete database record
+    # files are automatically deleted because
+    # drop_id uses ON DELETE CASCADE
+    cursor.execute(
+        """
+        DELETE FROM drops
+        WHERE drop_id = %s
+        """,
+        (drop_id,)
+    )
+
+    conn.commit()
+
+    cursor.close()
 
     return {
         "message": "Drop deleted successfully",
