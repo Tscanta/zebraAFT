@@ -123,6 +123,118 @@ def root():
 
 @app.post("/drops")
 def create_drop(lifetime: str = "24h"):
+    if lifetime not in ["24h", "permanent"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid drop lifetime"
+        )
+
+    drop_id = generate_drop_id()
+    delete_token = secrets.token_urlsafe(32)
+
+    created_at = datetime.utcnow()
+
+    if lifetime == "24h":
+        expires_at = created_at + timedelta(hours=24)
+    else:
+        expires_at = None
+
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        INSERT INTO drops (
+            drop_id,
+            delete_token,
+            lifetime,
+            created_at,
+            expires_at
+        )
+        VALUES (%s, %s, %s, %s, %s)
+        """,
+        (
+            drop_id,
+            delete_token,
+            lifetime,
+            created_at,
+            expires_at
+        )
+    )
+
+    conn.commit()
+    cursor.close()
+
+    drop_folder = os.path.join(
+        UPLOAD_DIR,
+        drop_id
+    )
+
+    os.makedirs(
+        drop_folder,
+        exist_ok=True
+    )
+
+    return {
+        "drop_id": drop_id,
+        "delete_token": delete_token,
+        "expires_at": expires_at
+    }
+    if lifetime not in ["24h", "permanent"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid drop lifetime"
+        )
+
+    drop_id = generate_drop_id()
+    delete_token = secrets.token_urlsafe(32)
+
+    created_at = datetime.utcnow()
+
+    if lifetime == "24h":
+        expires_at = created_at + timedelta(hours=24)
+    else:
+        expires_at = None
+
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        INSERT INTO drops (
+            drop_id,
+            delete_token,
+            lifetime,
+            created_at,
+            expires_at
+        )
+        VALUES (%s, %s, %s, %s, %s)
+        """,
+        (
+            drop_id,
+            delete_token,
+            lifetime,
+            created_at,
+            expires_at
+        )
+    )
+
+    conn.commit()
+    cursor.close()
+
+    drop_folder = os.path.join(
+        UPLOAD_DIR,
+        drop_id
+    )
+
+    os.makedirs(
+        drop_folder,
+        exist_ok=True
+    )
+
+    return {
+        "drop_id": drop_id,
+        "delete_token": delete_token,
+        "expires_at": expires_at
+    }
     drop_id = generate_drop_id()
     delete_token = secrets.token_urlsafe(32)
 
@@ -183,29 +295,75 @@ def create_drop(lifetime: str = "24h"):
 
 
 @app.post("/drops/{drop_id}/files")
-def upload_file(
-    drop_id: str,
-    file: UploadFile = File(...)
-):
-    drop_folder = os.path.join(UPLOAD_DIR, drop_id)
+def upload_file(drop_id: str, file: UploadFile = File(...)):
+    cursor = conn.cursor()
 
-    if not os.path.exists(drop_folder):
+    # Check that the Drop exists
+    cursor.execute(
+        """
+        SELECT drop_id
+        FROM drops
+        WHERE drop_id = %s
+        """,
+        (drop_id,)
+    )
+
+    drop = cursor.fetchone()
+
+    if not drop:
+        cursor.close()
         raise HTTPException(
             status_code=404,
             detail="Drop not found"
         )
 
+    # Generate file information
     file_id = generate_file_id()
-
     filename = os.path.basename(file.filename)
 
-    file_path = os.path.join(
+    drop_folder = os.path.join(
+        UPLOAD_DIR,
+        drop_id
+    )
+
+    os.makedirs(
+        drop_folder,
+        exist_ok=True
+    )
+
+    storage_path = os.path.join(
         drop_folder,
         f"{file_id}_{filename}"
     )
 
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+    # Save the actual file locally
+    with open(storage_path, "wb") as buffer:
+        shutil.copyfileobj(
+            file.file,
+            buffer
+        )
+
+    # Save file metadata in Supabase
+    cursor.execute(
+        """
+        INSERT INTO files (
+            file_id,
+            drop_id,
+            filename,
+            storage_path
+        )
+        VALUES (%s, %s, %s, %s)
+        """,
+        (
+            file_id,
+            drop_id,
+            filename,
+            storage_path
+        )
+    )
+
+    conn.commit()
+    cursor.close()
 
     return {
         "message": "File uploaded successfully",
@@ -214,9 +372,61 @@ def upload_file(
         "filename": filename
     }
 
-
 @app.get("/drops/{drop_id}")
 def get_drop(drop_id: str):
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT
+            drop_id,
+            created_at,
+            expires_at
+        FROM drops
+        WHERE drop_id = %s
+        """,
+        (drop_id,)
+    )
+
+    drop = cursor.fetchone()
+
+    if not drop:
+        cursor.close()
+        raise HTTPException(
+            status_code=404,
+            detail="Drop not found"
+        )
+
+    cursor.execute(
+        """
+        SELECT
+            file_id,
+            filename
+        FROM files
+        WHERE drop_id = %s
+        ORDER BY created_at
+        """,
+        (drop_id,)
+    )
+
+    file_rows = cursor.fetchall()
+
+    cursor.close()
+
+    files = []
+
+    for file_id, filename in file_rows:
+        files.append({
+            "file_id": file_id,
+            "filename": filename
+        })
+
+    return {
+        "drop_id": drop[0],
+        "created_at": drop[1],
+        "expires_at": drop[2],
+        "files": files
+    }
 
     drop_folder = os.path.join(
         UPLOAD_DIR,
