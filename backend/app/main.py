@@ -58,7 +58,10 @@ app = FastAPI(title="Anonymous File Transfer")
 # Allow requests from the Svelte development server
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=[
+        "http://localhost:5173",
+        "https://zebra-aft.vercel.app",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
