@@ -597,14 +597,14 @@ def download_file(file_id: str):
 
 
 # Delete a Drop using its private delete token
+# Delete a Drop using its private delete token
 @app.delete("/drops/{drop_id}")
 def delete_drop(
     drop_id: str,
     delete_token: str
 ):
-    validate_drop_id(drop_id)
 
-    conn = get_db_connection()
+    validate_drop_id(drop_id)
 
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -642,7 +642,7 @@ def delete_drop(
             detail="Invalid delete token"
         )
 
-    # Get all Storage files belonging to the Drop
+    # Get all files belonging to the Drop
     cursor.execute(
         """
         SELECT storage_path
@@ -654,7 +654,7 @@ def delete_drop(
 
     storage_files = cursor.fetchall()
 
-    # Delete Storage files first
+    # Delete every file from Supabase Storage
     for (storage_path,) in storage_files:
         try:
             supabase.storage.from_(
@@ -668,7 +668,7 @@ def delete_drop(
             conn.close()
 
             print(
-                f"Could not delete "
+                f"Could not delete storage file "
                 f"{storage_path}: {error}"
             )
 
@@ -677,9 +677,8 @@ def delete_drop(
                 detail="Could not delete Drop files"
             )
 
-    # Delete the Drop metadata.
-    # File metadata is removed automatically
-    # because of ON DELETE CASCADE.
+    # Only delete the database record after
+    # every Storage file has been removed.
     try:
         cursor.execute(
             """
@@ -691,10 +690,15 @@ def delete_drop(
 
         conn.commit()
 
-    except Exception:
+    except Exception as error:
         conn.rollback()
+
         cursor.close()
         conn.close()
+
+        print(
+            f"Could not delete Drop {drop_id}: {error}"
+        )
 
         raise HTTPException(
             status_code=500,
