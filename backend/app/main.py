@@ -95,6 +95,14 @@ def validate_drop_id(drop_id: str):
             detail="Invalid Drop code"
         )
 
+# Validate a file ID before querying the database
+def validate_file_id(file_id: str):
+    if not re.fullmatch(r"[A-Za-z0-9_-]{20,30}", file_id):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid file ID"
+        )
+
 # Clean and validate an uploaded filename
 def sanitize_filename(filename: str) -> str:
     filename = os.path.basename(filename).strip()
@@ -540,16 +548,22 @@ def get_drop(drop_id: str):
 @app.get("/files/{file_id}/download")
 def download_file(file_id: str):
 
+    validate_file_id(file_id)
+
     conn = get_db_connection()
     cursor = conn.cursor()
 
+    # Get the file and the expiration time of its Drop
     cursor.execute(
         """
         SELECT
-            filename,
-            storage_path
+            files.filename,
+            files.storage_path,
+            drops.expires_at
         FROM files
-        WHERE file_id = %s
+        JOIN drops
+            ON files.drop_id = drops.drop_id
+        WHERE files.file_id = %s
         """,
         (file_id,)
     )
@@ -565,8 +579,19 @@ def download_file(file_id: str):
             detail="File not found"
         )
 
-    filename, storage_path = result
+    filename, storage_path, expires_at = result
 
+    # Prevent downloading files from expired Drops
+    if (
+        expires_at is not None
+        and expires_at <= datetime.now(timezone.utc)
+    ):
+        raise HTTPException(
+            status_code=404,
+            detail="Drop has expired"
+        )
+
+    # Download the actual file from Supabase Storage
     try:
         file_bytes = supabase.storage.from_(
             "uploads"
@@ -594,6 +619,7 @@ def download_file(file_id: str):
             )
         }
     )
+
 
 
 # Delete a Drop using its private delete token
