@@ -1,241 +1,409 @@
-# Anonymous File Transfer
+# zebraAFT
 
-A lightweight file-transfer web application that lets users share files between devices using a short **drop code**, without requiring an account or login.
+### Anonymous File Transfer
 
-> **Status:** 🚧 In Development
+zebraAFT is a lightweight, code-based file transfer application designed to move files between devices without requiring user accounts or login.
 
-## ✨ Overview
+Create a Drop, upload files, share the short Drop Code, and access the files from another device.
 
-Anonymous File Transfer is designed for quickly moving files between devices, especially when using a public or shared computer.
-
-Instead of creating an account or sending a traditional share link, a user can:
-
-1. Select one or more files.
-2. Create a temporary drop.
-3. Receive a short drop code.
-4. Enter that code on another device.
-5. View and download the files.
-
-The project is being built with a simple frontend/backend architecture and Supabase for persistent cloud data.
+[Live Demo](https://zebra-aft.vercel.app/) · [Backend API](https://zebraAFT-backend.onrender.com/) · [API Docs](https://zebraAFT-backend.onrender.com/docs)
 
 ---
 
-## 🖥️ How It Works
+## Screenshot
+
+![zebraAFT home page](docs/screenshots/home.png)
+
+---
+
+## Features
+
+- Anonymous file transfer without accounts
+- Short 8-character Drop Codes
+- Multiple file uploads
+- Add files to an existing Drop
+- 24-hour or permanent Drops
+- Automatic expiration for temporary Drops
+- Creator-only Drop deletion using a private delete token
+- File downloads through the backend
+- Image thumbnails
+- File-type indicators for common formats
+- Optional QR code display
+- 100 MB maximum upload size
+- Filename validation and sanitization
+- Drop and file ID validation
+- Expired Drop protection
+- Failed-upload cleanup
+- PostgreSQL persistence
+- Private Supabase Storage
+- Production deployment with Vercel and Render
+- Environment-based API configuration
+
+---
+
+## How It Works
 
 ```text
-                 DEVICE A
-                    │
-                    │ Select files
-                    ▼
-             ┌──────────────┐
-             │ Create Drop  │
-             └──────┬───────┘
-                    │
-                    ▼
-              KOUH3XG3
-                    │
-                    │ Enter code
-                    ▼
-                 DEVICE B
-                    │
-                    ▼
-             ┌──────────────┐
-             │  Load Drop   │
-             └──────┬───────┘
-                    │
-                    ▼
-              Download Files
+Create Drop
+     │
+     ▼
+Choose lifetime
+     │
+     ▼
+Upload files
+     │
+     ▼
+Receive Drop Code
+     │
+     ├──────────────► Share Code / QR
+     │
+     ▼
+Open Drop from another device
+     │
+     ├──────────────► Download files
+     │
+     └──────────────► Add more files
+     │
+     ▼
+Drop expires automatically
+or the creator deletes it
 ```
 
-Each drop has a unique code that can be used to retrieve the files.
+The Drop Code is the main identifier. A separate delete token is generated for the creator and is required to delete the Drop.
 
 ---
 
-## 🚀 Features
+## Architecture
 
-### Current / Implemented
+![zebraAFT architecture](docs/architecture.svg)
 
-- 📁 Multiple file selection
-- ☁️ Supabase integration
-- 🔑 Short randomly generated drop codes
-- ⏱️ Drop lifetime selection
-- 🗑️ Drop deletion
-- 📥 File retrieval/download flow
-- 🖥️ Responsive web interface
-- ⚡ Svelte + Vite frontend
-- 🚀 FastAPI backend
-- 🗄️ PostgreSQL/Supabase database
+The production system is split into four main parts:
 
-### In Development
-
-- 📱 QR-code sharing
-- 🔳 Show QR button on demand
-- 🧹 Reliable automatic cleanup of expired drops/files
-- 🖼️ Improved file thumbnails/previews
-- 🔐 Better validation and error handling
-- 🌐 Production deployment
-
----
-
-## 🛠️ Tech Stack
+```text
+Browser
+   │
+   ▼
+Vercel
+Svelte + Vite
+   │
+   │ HTTPS
+   ▼
+Render
+FastAPI + Uvicorn
+   │
+   ├──────────────► Supabase PostgreSQL
+   │                  └── Drop + file metadata
+   │
+   └──────────────► Supabase Storage
+                      └── Private file objects
+```
 
 ### Frontend
 
-- [Svelte](https://svelte.dev/)
-- [Vite](https://vitejs.dev/)
+- Svelte
 - TypeScript
-- HTML/CSS
-- `qrcode` for QR-code generation
+- Vite
+- QRCode library
 
 ### Backend
 
 - Python
-- [FastAPI](https://fastapi.tiangolo.com/)
+- FastAPI
 - Uvicorn
-- REST API
+- psycopg2
+- python-dotenv
+- python-multipart
+- Supabase Python client
 
-### Database & Storage
+### Infrastructure
 
-- [Supabase](https://supabase.com/)
-- PostgreSQL
-- Supabase Storage
+- Vercel — frontend hosting
+- Render — backend hosting
+- Supabase PostgreSQL — persistent metadata
+- Supabase Storage — private file storage
+- GitHub — source control and deployment trigger
 
 ---
 
-## 📂 Project Structure
+## Project Structure
 
 ```text
-anonymous-file-transfer/
+zebraAFT/
 │
 ├── backend/
 │   ├── app/
-│   │   ├── main.py
-│   │   └── ...
-│   ├── uploads/
+│   │   └── main.py
 │   ├── requirements.txt
 │   └── ...
 │
 ├── frontend/
 │   ├── public/
+│   │   └── favicon.svg
 │   ├── src/
-│   │   ├── lib/
-│   │   │   └── api.ts
 │   │   ├── App.svelte
 │   │   ├── app.css
-│   │   └── main.ts
+│   │   ├── main.ts
+│   │   └── lib/
+│   │       └── api.ts
+│   ├── index.html
 │   ├── package.json
-│   ├── vite.config.ts
 │   └── ...
+│
+├── docs/
+│   ├── architecture.svg
+│   └── screenshots/
+│       └── home.png
 │
 ├── .gitignore
 └── README.md
 ```
 
-> The structure may change as the project develops.
+---
+
+## API
+
+### Health Check
+
+```http
+GET /
+```
+
+Returns:
+
+```json
+{
+  "message": "Anonymous File Transfer API is running"
+}
+```
+
+### Create a Drop
+
+```http
+POST /drops?lifetime=24h
+```
+
+or:
+
+```http
+POST /drops?lifetime=permanent
+```
+
+Example response:
+
+```json
+{
+  "drop_id": "4E439DG5",
+  "delete_token": "...",
+  "expires_at": "..."
+}
+```
+
+### Upload a File
+
+```http
+POST /drops/{drop_id}/files
+```
+
+Uses multipart form data.
+
+### Get a Drop
+
+```http
+GET /drops/{drop_id}
+```
+
+Returns the Drop metadata and its files.
+
+### Download a File
+
+```http
+GET /files/{file_id}/download
+```
+
+The backend checks that the associated Drop has not expired before returning the file.
+
+### Delete a Drop
+
+```http
+DELETE /drops/{drop_id}?delete_token=...
+```
+
+The creator's delete token is required.
 
 ---
 
-## ⚙️ Running Locally
+## Database
 
-### 1. Clone the repository
+zebraAFT uses PostgreSQL through Supabase.
 
-```bash
-git clone https://github.com/YOUR_USERNAME/anonymous-file-transfer.git
-cd anonymous-file-transfer
+### `drops`
+
+```text
+drop_id
+delete_token
+lifetime
+created_at
+expires_at
 ```
+
+### `files`
+
+```text
+file_id
+drop_id
+filename
+storage_path
+created_at
+```
+
+The `files.drop_id` foreign key references `drops.drop_id` with `ON DELETE CASCADE`.
 
 ---
 
-# Backend Setup
+## Storage
 
-### 2. Create a virtual environment
+Actual file bytes are stored in a private Supabase Storage bucket:
 
-Windows:
-
-```powershell
-python -m venv .venv
+```text
+uploads/
 ```
 
-Activate it:
+Storage paths use generated IDs rather than the original filename:
 
-```powershell
-.venv\Scripts\activate
+```text
+<drop_id>/<file_id><extension>
 ```
 
-Linux/macOS:
+The original filename is stored separately in PostgreSQL.
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
+This allows filenames containing spaces and Unicode characters to be displayed normally without using them directly as the Storage object path.
+
+---
+
+## Security and Reliability
+
+The backend includes several validation and reliability measures:
+
+### Drop Code validation
+
+Drop Codes must match:
+
+```text
+[A-Z0-9]{8}
 ```
 
-### 3. Install dependencies
+### File ID validation
 
-```bash
-pip install -r backend/requirements.txt
+Generated file IDs are validated before download requests are processed.
+
+### Filename validation
+
+Uploaded filenames are:
+
+- reduced to their basename
+- stripped of surrounding whitespace
+- limited to 255 characters
+- rejected if they contain control characters
+
+### Upload size limit
+
+The current maximum is:
+
+```text
+100 MB
 ```
 
-### 4. Configure environment variables
+### Expiration protection
 
-Create a `.env` file for the backend.
+Expired Drops cannot be:
 
-Example:
+- opened
+- uploaded to
+- downloaded from
+
+### Failed upload cleanup
+
+If a file reaches Storage but its database metadata cannot be inserted, the backend attempts to remove the orphaned Storage object.
+
+### Delete authorization
+
+The public Drop Code is separate from the creator's private delete token.
+
+Knowing only the Drop Code is not sufficient to perform the creator-only delete operation.
+
+---
+
+## Environment Variables
+
+### Backend
+
+Create a `.env` file for local backend development:
 
 ```env
+DATABASE_URL=your_postgresql_connection_string
 SUPABASE_URL=your_supabase_project_url
-SUPABASE_KEY=your_supabase_key
-DATABASE_URL=your_database_connection_string
+SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 ```
 
-**Never commit real credentials to GitHub.**
+Do not commit this file.
 
-Make sure `.env` is included in `.gitignore`.
+### Frontend
 
-### 5. Start FastAPI
+For local development:
 
-From the backend/project directory, run the command appropriate to your project structure, for example:
+```env
+VITE_API_URL=http://127.0.0.1:8000
+```
 
-```bash
+For production:
+
+```env
+VITE_API_URL=https://zebraAFT-backend.onrender.com
+```
+
+The frontend `.env` file is also excluded from Git.
+
+---
+
+## Local Development
+
+### Backend
+
+From the project root:
+
+```powershell
+cd backend
+```
+
+Activate your virtual environment if you use one, then:
+
+```powershell
 uvicorn app.main:app --reload
 ```
 
-The API should then be available at:
+The local API is available at:
 
 ```text
 http://127.0.0.1:8000
 ```
 
-FastAPI documentation:
+Swagger documentation:
 
 ```text
 http://127.0.0.1:8000/docs
 ```
 
----
+### Frontend
 
-# Frontend Setup
+Open another terminal:
 
-### 6. Install frontend dependencies
-
-```bash
+```powershell
 cd frontend
 npm install
-```
-
-If QR functionality is enabled:
-
-```bash
-npm install qrcode
-npm install -D @types/qrcode
-```
-
-### 7. Start the frontend
-
-```bash
 npm run dev
 ```
 
-Vite will normally provide:
+The Vite development server is normally available at:
 
 ```text
 http://localhost:5173
@@ -243,208 +411,194 @@ http://localhost:5173
 
 ---
 
-## 🔄 Example Workflow
+## Production Deployment
 
-### Device A
+### Frontend
 
-```text
-1. Open the application
-2. Select files
-3. Choose drop lifetime
-4. Create the drop
-5. Receive a drop code
-6. Share the code / QR code
-```
-
-Example:
+The Svelte/Vite frontend is deployed through Vercel.
 
 ```text
-KOUH3XG3
+https://zebra-aft.vercel.app/
 ```
 
-### Device B
+Typical Vercel configuration:
 
 ```text
-1. Open the application
-2. Enter KOUH3XG3
-3. Load the drop
-4. View available files
-5. Download the required files
+Root Directory: frontend
+Framework: Vite
+Build Command: npm run build
+Output Directory: dist
 ```
 
-No account is required for the transfer flow.
-
----
-
-## ⏱️ Drop Expiration
-
-Drops can be configured with a lifetime such as:
+Production environment variable:
 
 ```text
-24 hours
+VITE_API_URL=https://zebraAFT-backend.onrender.com
 ```
 
-Expired drops should be removed automatically so that old files do not remain indefinitely.
+### Backend
 
-The cleanup system is still being refined to ensure that both:
-
-- database records
-- stored files
-
-are removed correctly.
-
----
-
-## 🔐 Security Considerations
-
-This project is designed around anonymous file sharing, but anonymity does **not** automatically mean complete privacy or security.
-
-Before production deployment, the following areas need to be addressed carefully:
-
-- File-size limits
-- Allowed file types
-- Rate limiting
-- Abuse prevention
-- Expiration enforcement
-- Secure Supabase Storage policies
-- Random/unpredictable drop IDs
-- HTTPS
-- Server-side validation
-- Download authorization
-- Storage cleanup
-- Protection against malicious uploads
-
-Do not treat the current development version as a hardened production file-sharing service.
-
----
-
-## 🗺️ Roadmap
-
-### Phase 1 — Core Transfer
-
-- [x] File selection
-- [x] Create drops
-- [x] Generate drop codes
-- [x] Upload files
-- [x] Retrieve drops
-- [x] Download files
-- [x] Drop deletion
-
-### Phase 2 — User Experience
-
-- [x] Svelte frontend
-- [x] File previews
-- [ ] Better thumbnails for non-image files
-- [ ] Improved loading states
-- [ ] Better error messages
-- [ ] Mobile UI improvements
-- [ ] QR sharing
-
-### Phase 3 — Storage
-
-- [x] Supabase database integration
-- [x] Supabase Storage integration
-- [ ] Automatic expired-file deletion
-- [ ] Storage cleanup verification
-- [ ] Storage usage limits
-
-### Phase 4 — Production
-
-- [ ] Deploy frontend
-- [ ] Deploy FastAPI backend
-- [ ] Configure production CORS
-- [ ] HTTPS
-- [ ] Rate limiting
-- [ ] File-size restrictions
-- [ ] Abuse protection
-- [ ] Production Supabase policies
-- [ ] Monitoring/logging
-
----
-
-## 🧪 Development
-
-Frontend:
-
-```bash
-cd frontend
-npm run dev
-```
-
-Backend:
-
-```bash
-uvicorn app.main:app --reload
-```
-
-Check API documentation:
+The FastAPI backend is deployed through Render.
 
 ```text
-http://127.0.0.1:8000/docs
+https://zebraAFT-backend.onrender.com
+```
+
+Render configuration:
+
+```text
+Root Directory: backend
+Build Command: pip install -r requirements.txt
+Start Command: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+```
+
+Required Render environment variables:
+
+```text
+DATABASE_URL
+SUPABASE_URL
+SUPABASE_SERVICE_ROLE_KEY
 ```
 
 ---
 
-## 🤝 Contributing
+## Git Workflow
 
-Contributions are welcome.
+The project uses GitHub as the source repository.
 
-1. Fork the repository.
-2. Create a feature branch.
+A normal development cycle is:
 
-```bash
-git checkout -b feature/my-feature
-```
-
-3. Make your changes.
-4. Test them locally.
-5. Commit your changes.
-
-```bash
+```text
+Edit
+  ↓
+Test locally
+  ↓
 git add .
-git commit -m "feat: add my feature"
+  ↓
+git commit
+  ↓
+git push origin main
 ```
 
-6. Push the branch.
-
-```bash
-git push origin feature/my-feature
-```
-
-7. Open a Pull Request.
+Vercel and Render are connected to the GitHub repository, so pushes to the configured branch can trigger deployments automatically.
 
 ---
 
-## 📜 License
+## Screenshots for the README
 
-Add your preferred license here.
+The README currently includes the home-page screenshot.
 
-For example:
+For a stronger GitHub presentation, I recommend adding these **three actual screenshots**:
+
+### 1. Home page
+
+File:
 
 ```text
-MIT License
+docs/screenshots/home.png
 ```
 
----
+Place it directly below the title or in the `Screenshot` section.
 
-## 👤 Author
+Show:
 
-**Tshedup**
+- zebraAFT logo
+- file picker
+- Drop creation controls
 
-Built as a personal software project focused on simple, anonymous device-to-device file transfer.
+### 2. Active Drop
 
----
-
-## ⭐ Project Goal
-
-The long-term goal is to make file transfer feel as simple as:
+File:
 
 ```text
-Select → Create Drop → Share Code → Download
+docs/screenshots/drop.png
 ```
 
-No account.
+Take this after creating a Drop.
 
-No complicated setup.
+Try to capture:
 
-Just the files you need, when you need them.
+- Drop Code
+- Copy Code button
+- Show QR button
+- expiration information
+- uploaded files
+- download buttons
+
+Add it below the `How It Works` section:
+
+```markdown
+## Drop Interface
+
+![Active Drop](docs/screenshots/drop.png)
+```
+
+### 3. Mobile / Second Device
+
+File:
+
+```text
+docs/screenshots/mobile.png
+```
+
+Show the same Drop being opened from a phone or another browser.
+
+This demonstrates the actual purpose of the project better than another desktop screenshot.
+
+Add:
+
+```markdown
+## Cross-Device Transfer
+
+![Cross-device transfer](docs/screenshots/mobile.png)
+```
+
+### Optional 4. QR Code
+
+File:
+
+```text
+docs/screenshots/qr.png
+```
+
+Show the Drop page with the QR code visible.
+
+This is optional because the Drop screenshot can already show the QR.
+
+---
+
+## Recommended README Screenshot Layout
+
+A clean GitHub README could look like:
+
+```text
+zebraAFT
+Anonymous File Transfer
+
+[Live Demo] [API Docs]
+
+              HOME SCREENSHOT
+
+About
+Features
+How It Works
+
+              ACTIVE DROP SCREENSHOT
+
+Architecture
+Tech Stack
+API
+Database
+Storage
+Security
+Local Development
+Production Deployment
+```
+
+I would **not** add lots of screenshots. Three strong screenshots are enough.
+
+---
+
+# 📄 LICENSE
+
+This project is licensed under the MIT License.
