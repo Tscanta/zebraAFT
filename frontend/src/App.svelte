@@ -604,7 +604,7 @@ async function handleCreateDrop() {
           <hr />
 
           <p>
-            v0.1.0<br />
+            v1.0<br />
             zebraAFT
           </p>
 
