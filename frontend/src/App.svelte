@@ -849,7 +849,7 @@ async function handleCreateDrop() {
       |
       <a href="/">terms</a>
       |
-      <a href="/">github</a>
+      <a href="https://github.com/Tscanta/zebraAFT">github</a>
     </span>
 
   </footer>
