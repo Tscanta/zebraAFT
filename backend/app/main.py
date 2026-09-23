@@ -95,6 +95,31 @@ def validate_drop_id(drop_id: str):
             detail="Invalid Drop code"
         )
 
+# Clean and validate an uploaded filename
+def sanitize_filename(filename: str) -> str:
+    filename = os.path.basename(filename).strip()
+
+    if not filename:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid filename"
+        )
+
+    if len(filename) > 255:
+        raise HTTPException(
+            status_code=400,
+            detail="Filename is too long"
+        )
+
+    # Prevent control characters from being stored
+    if any(ord(char) < 32 for char in filename):
+        raise HTTPException(
+            status_code=400,
+            detail="Filename contains invalid characters"
+        )
+
+    return filename
+
 
 # Delete expired Drops and their files
 async def cleanup_expired_drops():
@@ -312,7 +337,7 @@ async def upload_file(
     # Use a generated filename in Storage.
     file_id = generate_file_id()
 
-    filename = os.path.basename(
+    filename = sanitize_filename(
         file.filename
     )
 
