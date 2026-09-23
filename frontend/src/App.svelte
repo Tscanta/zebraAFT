@@ -778,7 +778,7 @@ async function handleCreateDrop() {
     {#if isImage(file.filename)}
 
     <img
-      src={`http://127.0.0.1:8000/files/${file.file_id}/download`}
+      src={`${import.meta.env.VITE_API_URL}/files/${file.file_id}/download`}
       alt={file.filename}
     />
 
@@ -808,7 +808,7 @@ async function handleCreateDrop() {
 
   <a
     class="download-button"
-    href={`http://127.0.0.1:8000/files/${file.file_id}/download`}
+    href={`${import.meta.env.VITE_API_URL}/files/${file.file_id}/download`}
   >
     ↓ Download
   </a>
