@@ -3,6 +3,9 @@
   import { onMount } from "svelte";
   import QRCode from "qrcode";
 
+  import About from "./About.svelte";
+  import FAQs from "./FAQs.svelte";
+  import Source from "./Source.svelte";
   import Terms from "./Terms.svelte";
   import Privacy from "./Privacy.svelte";
 
@@ -376,8 +379,14 @@ async function handleCreateDrop() {
     <Terms />
 {:else if window.location.pathname === "/privacy"}
     <Privacy />
+{:else if window.location.pathname === "/about"}
+    <About />
+{:else if window.location.pathname === "/faqs"}
+    <FAQs />
+{:else if window.location.pathname === "/source"}
+    <Source />
 {:else}
-    <!-- your existing App.svelte content -->
+    
 {/if}
 
 <svelte:head>
@@ -408,10 +417,10 @@ async function handleCreateDrop() {
         <div class="panel-title">:: navigation</div>
 
         <div class="nav">
-          <a href="/">&gt; home</a>
-          <a href="/">&gt; about</a>
-          <a href="/">&gt; faq</a>
-          <a href="/">&gt; source</a>
+          <a href="/">> home</a>
+          <a href="/about">> about</a>
+          <a href="/faqs">> faq</a>
+          <a href="/source">> source</a>
         </div>
       </section>
 
@@ -850,7 +859,6 @@ async function handleCreateDrop() {
 {/if}
 
   <footer>
-
     <span>
       © 2026 zebraAFT
     </span>
