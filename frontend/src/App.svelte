@@ -3,6 +3,9 @@
   import { onMount } from "svelte";
   import QRCode from "qrcode";
 
+  import Terms from "./Terms.svelte";
+  import Privacy from "./Privacy.svelte";
+
   let selectedFiles: File[] = [];
   let dropCode = "";
   let deleteToken = "";
@@ -368,6 +371,14 @@ async function handleCreateDrop() {
 
 
 </script>
+
+{#if window.location.pathname === "/terms"}
+    <Terms />
+{:else if window.location.pathname === "/privacy"}
+    <Privacy />
+{:else}
+    <!-- your existing App.svelte content -->
+{/if}
 
 <svelte:head>
   <title>zebraAFT - Anonymous File Transfer</title>
@@ -841,13 +852,13 @@ async function handleCreateDrop() {
   <footer>
 
     <span>
-      © 2025 zebraAFT
+      © 2026 zebraAFT
     </span>
 
     <span class="footer-links">
-      <a href="/">privacy</a>
+      <a href="/privacy">privacy</a>
       |
-      <a href="/">terms</a>
+      <a href="/terms">terms</a>
       |
       <a href="https://github.com/Tscanta/zebraAFT">github</a>
     </span>
