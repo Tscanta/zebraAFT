@@ -12,7 +12,7 @@ Create a Drop, upload files, share the short Drop Code, and access the files fro
 
 ## Screenshot
 
-![zebraAFT home page](docs/screenshots/home.png)
+<img width="1828" height="860" alt="Screenshot 2026-09-28 194748" src="https://github.com/user-attachments/assets/c6f8b1ae-1ade-489a-8eab-3cfd2500ad32" />
 
 ---
 
