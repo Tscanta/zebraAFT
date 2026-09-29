@@ -6,8 +6,6 @@ zebraAFT is a lightweight, code-based file transfer application designed to move
 
 Create a Drop, upload files, share the short Drop Code, and access the files from another device.
 
-[Live Demo](https://zebra-aft.vercel.app/) · [Backend API](https://zebraAFT-backend.onrender.com/) · [API Docs](https://zebraAFT-backend.onrender.com/docs)
-
 ---
 
 ## Home Page
